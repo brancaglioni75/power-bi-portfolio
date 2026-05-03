@@ -170,84 +170,87 @@ in
 
 ```powerquery
 let
-    // 1. Identifica a data mínima e máxima da sua tabela fato "Receitas"
     DataMinima = List.Min(Receitas[Data]),
     DataMaxima = List.Max(Receitas[Data]),
 
-    // 2. Determina o início do primeiro ano e o fim do último ano
     DataInicio = Date.StartOfYear(DataMinima),
     DataFim = Date.EndOfYear(DataMaxima),
+    Duracao = Duration.Days(DataFim - DataInicio) + 1,
 
-    // 3. Calcula a quantidade de dias entre as datas
-    Duracao = Duration.Days(Duration.From(DataFim - DataInicio)) + 1,
-
-    // 4. Gera a lista de datas
     Fonte = List.Dates(DataInicio, Duracao, #duration(1, 0, 0, 0)),
+    Tabela = Table.FromList(Fonte, Splitter.SplitByNothing(), {"Data"}),
+    TipoAlterado = Table.TransformColumnTypes(Tabela, {{"Data", type date}}),
 
-    // 5. Converte a lista em Tabela
-    ConversaoEmTabela = Table.FromList(Fonte, Splitter.SplitByNothing(), null, null, ExtraValues.Error),
-    ColunaRenomeada = Table.RenameColumns(#"ConversaoEmTabela",{{"Column1", "Data"}}),
-    TipoAlterado = Table.TransformColumnTypes(#"ColunaRenomeada",{{"Data", type date}}),
-    #"Ano Inserido" = Table.AddColumn(TipoAlterado, "Ano", each Date.Year([Data]), Int64.Type),
-    #"Mês Inserido" = Table.AddColumn(#"Ano Inserido", "Mês", each Date.Month([Data]), Int64.Type),
-    #"Nome do Mês Inserido" = Table.AddColumn(#"Mês Inserido", "Nome do Mês", each Date.MonthName([Data]), type text),
-    #"Dia Inserido" = Table.AddColumn(#"Nome do Mês Inserido", "Dia", each Date.Day([Data]), Int64.Type),
-    #"Nome do Dia Inserido" = Table.AddColumn(#"Dia Inserido", "Nome do Dia", each Date.DayOfWeekName([Data]), type text),
-    #"Trimestre Inserido" = Table.AddColumn(#"Nome do Dia Inserido", "Trimestre", each Date.QuarterOfYear([Data]), Int64.Type),
+    Ano = Table.AddColumn(TipoAlterado, "Ano", each Date.Year([Data]), Int64.Type),
+    Mes = Table.AddColumn(Ano, "Mês", each Date.Month([Data]), Int64.Type),
+    NomeMes = Table.AddColumn(Mes, "Nome do Mês", each Date.MonthName([Data]), type text),
+    Dia = Table.AddColumn(NomeMes, "Dia", each Date.Day([Data]), Int64.Type),
+    NomeDia = Table.AddColumn(Dia, "Nome do Dia", each Date.DayOfWeekName([Data]), type text),
+    Trimestre = Table.AddColumn(NomeDia, "Trimestre", each Date.QuarterOfYear([Data]), Int64.Type),
+    Semestre = Table.AddColumn(Trimestre, "Semestre", each if [Mês] <= 6 then 1 else 2, Int64.Type),
 
-    // --- NOVAS COLUNAS ---
+    Estacao = Table.AddColumn(
+        Semestre,
+        "Estação",
+        each 
+            if ([Mês] = 3 and [Dia] >= 20) or ([Mês] > 3 and [Mês] < 6) or ([Mês] = 6 and [Dia] < 21) then "Outono"
+            else if ([Mês] = 6 and [Dia] >= 21) or ([Mês] > 6 and [Mês] < 9) or ([Mês] = 9 and [Dia] < 22) then "Inverno"
+            else if ([Mês] = 9 and [Dia] >= 22) or ([Mês] > 9 and [Mês] < 12) or ([Mês] = 12 and [Dia] < 21) then "Primavera"
+            else "Verão",
+        type text
+    ),
 
-    // 6. Semestre
-    #"Semestre Inserido" = Table.AddColumn(#"Trimestre Inserido", "Semestre", each if [Trimestre] <= 2 then 1 else 2, Int64.Type),
+    NomeFeriado = Table.AddColumn(
+        Estacao,
+        "Nome do Feriado",
+        each
+            let
+                DataAtual = [Data],
+                AnoAtual = Date.Year(DataAtual),
 
-    // 7. Estação do Ano (Hemisfério Sul)
-    #"Estação Inserida" = Table.AddColumn(#"Semestre Inserido", "Estação", each 
-        let 
-            m = [Mês], d = [Dia] 
-        in 
-            if (m = 3 and d >= 20) or (m > 3 and m < 6) or (m = 6 and d < 21) then "Outono"
-            else if (m = 6 and d >= 21) or (m > 6 and m < 9) or (m = 9 and d < 22) then "Inverno"
-            else if (m = 9 and d >= 22) or (m > 9 and m < 12) or (m = 12 and d < 21) then "Primavera"
-            else "Verão", type text),
+                a = Number.Mod(AnoAtual, 19),
+                b = Number.IntegerDivide(AnoAtual, 100),
+                c = Number.Mod(AnoAtual, 100),
+                d = Number.IntegerDivide(b, 4),
+                e = Number.Mod(b, 4),
+                f = Number.IntegerDivide(b + 8, 25),
+                g = Number.IntegerDivide(b - f + 1, 3),
+                h = Number.Mod(19 * a + b - d - g + 15, 30),
+                i = Number.IntegerDivide(c, 4),
+                k = Number.Mod(c, 4),
+                l = Number.Mod(32 + 2 * e + 2 * i - h - k, 7),
+                m = Number.IntegerDivide(a + 11 * h + 22 * l, 451),
+                MesPascoa = Number.IntegerDivide(h + l - 7 * m + 114, 31),
+                DiaPascoa = Number.Mod(h + l - 7 * m + 114, 31) + 1,
+                DataPascoa = #date(AnoAtual, MesPascoa, DiaPascoa),
 
-    // 8. Feriados Nacionais (Lógica de feriados fixos e cálculo básico de Páscoa para móveis)
-    #"Feriado Inserido" = Table.AddColumn(#"Estação Inserida", "Nome do Feriado", each 
-        let
-            Ano = Date.Year([Data]),
-            // Cálculo simplificado de Páscoa (Algoritmo de Butcher-Meeus)
-            a = Number.Mod(Ano, 19), b = Number.IntegerDivide(Ano, 100), c = Number.Mod(Ano, 100),
-            d = Number.IntegerDivide(b, 4), e = Number.Mod(b, 4), f = Number.IntegerDivide(b + 8, 25),
-            g = Number.IntegerDivide(b - f + 1, 3), h = Number.Mod(19 * a + b - d - g + 15, 30),
-            i = Number.IntegerDivide(c, 4), k = Number.Mod(c, 4), l = Number.Mod(32 + 2 * e + 2 * i - h - k, 7),
-            m = Number.IntegerDivide(a + 11 * h + 22 * l, 451),
-            MesPascoa = Number.IntegerDivide(h + l - 7 * m + 114, 31),
-            DiaPascoa = Number.Mod(h + l - 7 * m + 114, 31) + 1,
-            DataPascoa = #date(Ano, MesPascoa, DiaPascoa),
-            
-            Feriados = {
-                {#date(Ano, 1, 1), "Ano Novo"},
-                {#date(Ano, 4, 21), "Tiradentes"},
-                {#date(Ano, 5, 1), "Dia do Trabalho"},
-                {#date(Ano, 9, 7), "Independência"},
-                {#date(Ano, 10, 12), "Nossa Sra. Aparecida"},
-                {#date(Ano, 11, 2), "Finados"},
-                {#date(Ano, 11, 15), "Proclamação da República"},
-                {#date(Ano, 12, 25), "Natal"},
-                {Date.AddDays(DataPascoa, -47), "Carnaval"},
-                {Date.AddDays(DataPascoa, -2), "Sexta-feira Santa"},
-                {Date.AddDays(DataPascoa, 60), "Corpus Christi"}
-            },
-            NomeFeriado = List.First(List.Select(Feriados, each _{0} = [Data])){1}?
-        in
-            NomeFeriado, type text),
+                Nome =
+                    if DataAtual = #date(AnoAtual, 1, 1) then "Ano Novo"
+                    else if DataAtual = Date.AddDays(DataPascoa, -47) then "Carnaval"
+                    else if DataAtual = Date.AddDays(DataPascoa, -2) then "Sexta-feira Santa"
+                    else if DataAtual = #date(AnoAtual, 4, 21) then "Tiradentes"
+                    else if DataAtual = #date(AnoAtual, 5, 1) then "Dia do Trabalho"
+                    else if DataAtual = Date.AddDays(DataPascoa, 60) then "Corpus Christi"
+                    else if DataAtual = #date(AnoAtual, 9, 7) then "Independência"
+                    else if DataAtual = #date(AnoAtual, 10, 12) then "Nossa Sra. Aparecida"
+                    else if DataAtual = #date(AnoAtual, 11, 2) then "Finados"
+                    else if DataAtual = #date(AnoAtual, 11, 15) then "Proclamação da República"
+                    else if DataAtual = #date(AnoAtual, 11, 20) then "Consciência Negra"
+                    else if DataAtual = #date(AnoAtual, 12, 25) then "Natal"
+                    else null
+            in
+                Nome,
+        type text
+    ),
 
-    // 9. Dia Útil (Considera fim de semana e a coluna de feriados criada acima)
-    #"Dia Útil Inserido" = Table.AddColumn(#"Feriado Inserido", "Dia Útil", each 
-        if Date.DayOfWeek([Data], Day.Monday) < 5 and [Nome do Feriado] = null then "Sim" else "Não", type text)
-
+    DiaUtil = Table.AddColumn(
+        NomeFeriado,
+        "Dia Útil",
+        each if Date.DayOfWeek([Data], Day.Monday) < 5 and [Nome do Feriado] = null then "Sim" else "Não",
+        type text
+    )
 in
-    #"Dia Útil Inserido"
-
+    DiaUtil
 ```
 
 ## 🔹 4° Forma — DAX -  É a mais funcional pra mim
